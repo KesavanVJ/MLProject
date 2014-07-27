@@ -1,0 +1,114 @@
+---
+title: "Machine Learning Project"
+author: "Vijayaraghavan Kesavan"
+date: "July 26, 2014"
+output: html_document
+---
+  
+### Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+```{r Initialize, results='asis'}
+# Load Libraries - caret
+library(caret)
+
+# Set Seed & Working Directories
+set.seed(3175)
+setwd("~/Desktop/StatCourseProject/8MacLearning/MLProject")
+
+# Check for training and testing CSV data files
+if (! file.exists("traindata.csv")) {
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+             dest="./traindata.csv", method = "curl")
+}
+if (! file.exists("testdata.csv")) {
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              dest="./testdata.csv", method = "curl")
+}
+```
+
+### Data Cleansing
+
+Based on a quick review of data (using head() & summary() commands), there were more than 100 features that are not relevant identified and removed.  
+
+1. Features were empty - Blank Spaces or NA  
+2. Features were not numeric - Date (cvtd_timestamp)  and Character strings (user_name)  
+*Please note that test data set provided here can only be used as Out-of-Sample, since the test data set doesn't include the response (classe variable)*
+
+### Selecting Predictors
+To train, model & improve In-sample accuracy, the training data set has been split into train and validate data sets. 
+```{r DataCleansing, results='asis', cache=TRUE}
+# Read CSV files into data frames
+trainDF <- read.csv("traindata.csv",header=TRUE)
+testDF <- read.csv("testdata.csv", header=TRUE)
+
+# Use features that not empty from the Training data set
+trainTidyDF <- trainDF[, colSums(is.na(testDF))==0]
+
+# Create a train and validation data set from Training data set - 75% : 25%
+inTrain <- createDataPartition(y=trainTidyDF$classe, p=0.75, list=FALSE)
+
+# Remove Date & Character features that are not valid predictors
+training <- trainTidyDF[inTrain,8:60]
+validate <- trainTidyDF[-inTrain,8:60]
+```
+
+### Pre-Processing 
+Principal component Analysis has been applied to scale & center the predictors as well as for data compression reducing to 25 predictors from 52 predictors. These 25 predictors capture 95% of the variance in the data.
+```{r PreProcessing, results='asis', cache=TRUE}
+# Principal Compoenent Analysis - pre-processing with default variance threshold 95%
+preProc <- preProcess(training[,-53], method="pca")
+
+# Pre-process Training & Validate Data sets
+trainPPC <- predict(preProc, training[,-53])
+validatePPC <- predict(preProc, validate[,-53])
+```
+
+### Training 
+To improve accuracy, cross validation is applied to the Training set. Since this is not a repeated cross validation, there is more bias to the out-of-sample error rate, however less variance to the prediction. Due to compute limitations (processing & memory), a more robust training could not be applied. To further improve accuracy, the recommendation is to apply the repeated cross validation with 10 repeats, hence reducing the bias on the out-of-sample error rate. 
+```{r Training, results='markup', cache=TRUE}
+# Cross Validation Train Control method
+cvCtrl <- trainControl(method="cv")
+
+# Build a Random Forest 
+modelrf <- train(training$classe ~ ., data = trainPPC, trControl = cvCtrl, method = "rf")
+modelrf
+```
+*The tree with TWO predictors (mtry = 2) was the most accurate with expected accuracy of 97.6% and was used as the final model.*    
+
+### Validation
+Apply the random forest model on the validation data set to generate predictions.**Please note that Pre-processed validation data is used for prediction.**  
+```{r Validation, results='markup', cache=TRUE}
+# Cross Validation Train Control method
+# Predict the classe for the Validation data set
+validatePred <- predict(modelrf, newdata=validatePPC)
+confusionMatrix(validate$classe, validatePred)
+```
+The In-sample accuracy for the validation data set is 97.63%. 
+
+### Prediction
+The random forest model has been applied to the test data set and the predictions were saved to inidividual text files for online submission.
+```{r Prediction, results='asis', cache=TRUE}
+# Prepare the Test Data (Cleanse test data using the same method applied for Training data)
+testTidyDF <- testDF[, colSums(is.na(testDF))==0]
+
+# Eliminate predictors (Date & Character data types)
+testTidyDF <- testTidyDF[,8:60]
+
+# Pre-process Test data using the Pre-process model generated from Training data set.
+testPPC <- predict(preProc, testTidyDF[,-53])
+
+# Predict classe for the test data
+testPred <- predict(modelrf, newdata=testPPC)
+
+# Write predictions to individual files for  online submission
+predWrite = function(x){
+    for(i in 1:length(x)){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+predWrite(testPred)
+```
+### Conclusion
+During online submission, only problem id 3 prediction was incorrect. Hence the out-of-sample accuracy is 95% (19/20).
